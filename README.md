@@ -1,110 +1,136 @@
-# Krishi Mitra
+✨ Features
+🌱 1. Farm Advisory (AI)
 
-Krishi Mitra is a web platform built to give farmers clear, reliable and usable information. It combines AI-generated crop advisory, image-based disease detection, live weather data and a simple market linkage system. The goal is to help farmers make better decisions with less guesswork.
+Choose a crop, location, and season to get a structured advisory generated using Google Gemini.
 
-**Live Demo:** https://krishi-miitra.vercel.app/
+Outputs include:
 
----
+Crop diagnosis
 
-## Features
+Best practices
 
-### Farm Advisory (AI)
-Select a crop, location and season.  
-The system uses Gemini to generate a structured advisory that includes:
+Common challenges
 
-- Crop diagnosis  
-- Best practices  
-- Common challenges  
-- Fertilizer strategy  
-- Irrigation schedule  
-- Harvesting guidance  
+Fertilizer strategy
 
-The output is specific to the crop and region, not generic text.
+Irrigation schedule
 
----
+Harvesting guidance
 
-### Disease Detection (Image Upload)
-Upload a photo of a leaf or plant.  
-Gemini Vision analyzes the image and returns:
+The system generates region-specific and crop-specific guidance, not generic text.
 
-- Clear diagnosis  
-- Confidence score  
-- Direct treatment steps  
+🩺 2. Disease Detection (Image Upload)
 
-Example:  
-**Diagnosis:** Severe Leaf Blight  
-**Confidence:** 85%  
-**Advice:** Remove infected debris, apply broad-spectrum fungicide, avoid overhead watering, improve air movement.
+Upload an image of a plant leaf.
+Gemini Vision analyzes the photo and provides:
 
----
+Clear disease diagnosis
 
-### Live Weather
-A quick weather tool that lets farmers check any city’s current conditions.  
-Useful for irrigation, spraying, and field planning.
+Confidence score
 
----
+Recommended treatment steps
 
-### Market Linkage
-A simple space for farmers to track crop listings:
+Example:
 
-- Crop name  
-- Quantity  
-- Unit  
-- Expected price  
+Diagnosis: Severe Leaf Blight
+Confidence: 85%
+Advice: Remove infected debris, apply broad-spectrum fungicide, avoid overhead watering.
 
-Farmers can edit or delete their entries.  
-Data is stored in Supabase.
+🌤️ 3. Live Weather
 
----
+A simple and fast weather tool that shows:
 
-## Tech Stack
+Temperature
 
-**Frontend**  
-- React  
-- Vite  
-- Tailwind CSS  
+Humidity
 
-**APIs & Services**  
-- Gemini API (advisory + disease detection)  
-- Weather API (live weather)  
-- Supabase (database + auth)  
-- Google OAuth  
-- Web3Forms (contact form)
+Wind
 
-**Deployment**  
-- Vercel  
+Weather conditions
 
----
+Farmers can quickly check conditions before irrigation, spraying, or field operations.
 
-## Environment Variables
+🛒 4. Market Linkage
 
-The project requires the following:
+A minimal marketplace for farmers to track their crop listings:
 
-VITE_SUPABASE_URL,
-VITE_SUPABASE_PUBLISHABLE_KEY,
-VITE_GEMINI_API_KEY,
-VITE_WEATHER_API_KEY,
-VITE_WEB3FORMS_API_KEY,
-VITE_GOOGLE_CLIENT_ID,
-VITE_GOOGLE_CLIENT_SECRET
+Crop name
 
+Quantity
 
-Add them to a `.env` file before running the project locally.
+Unit
 
----
+Expected price
 
-## Getting Started
+Farmers can add / edit / delete listings.
+All data is securely stored in Supabase.
 
-Clone the repository:
+🛰️ 5. Geospatial AI (Satellite-Based Insights)
 
+The Geospatial AI module uses satellite imagery data to give farmers visual insights into their fields.
+
+Key Capabilities:
+
+Access to Sentinel-2 and RISAT satellite data
+
+NDVI-based vegetation health visualization
+
+Early stress detection (pest, drought, nutrient deficiency)
+
+Real-time field monitoring
+
+Simple color-coded map interface
+
+This helps farmers see field-level problem areas without physical inspection.
+
+🧰 Tech Stack
+Frontend
+
+React
+
+Vite
+
+Tailwind CSS
+
+Backend & Services
+
+Supabase (database + auth + storage)
+
+Google OAuth
+
+Web3Forms
+
+Gemini API (advisory + vision-based diagnosis)
+
+Weather API
+
+Deployment
+
+Vercel
+
+🔐 Environment Variables
+
+Create a .env file and add the following:
+
+VITE_SUPABASE_URL=
+VITE_SUPABASE_PUBLISHABLE_KEY=
+VITE_GEMINI_API_KEY=
+VITE_WEATHER_API_KEY=
+VITE_WEB3FORMS_API_KEY=
+VITE_GOOGLE_CLIENT_ID=
+VITE_GOOGLE_CLIENT_SECRET=
+
+🚀 Getting Started
+1. Clone the repository
 git clone https://github.com/neevlila/krishi-miitra.git
-
 cd krishi-miitra
 
-Install dependencies:
-
+2. Install dependencies
 npm install
 
-Run locally:
-
+3. Run locally
 npm run dev
+
+
+Your app will be available at:
+➡️ http://localhost:5173/
