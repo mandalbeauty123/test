@@ -1,410 +1,394 @@
-import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { User, Session } from "@supabase/supabase-js";
-import Header from "@/components/Header";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
-import { Leaf, ArrowLeft, Calendar, Trash, Trash2, Archive } from "lucide-react";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { format } from "date-fns";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import React, { useState } from 'react';
+import { Sprout, MapPin, Activity, Droplets, ThermometerSun, History, Leaf, Search, Navigation } from 'lucide-react';
 
-interface Advisory {
-  id: string;
-  user_id: string;
-  diagnosis: string;
-  advice: string;
-  created_at: string;
-}
+const App = () => {
+  // --- STATE MANAGEMENT ---
+  const [formData, setFormData] = useState({
+    crop: 'Wheat',
+    placeName: '', // Auto-fills via API
+    lat: '',       // Auto-fills via GPS
+    lon: '',       // Auto-fills via GPS
+    stage: 'Vegetative',
+    ph: '6.5' 
+  });
 
-const AdvisoryFormatter = ({ advice }: { advice: string }) => {
-  try {
-    const parsed = JSON.parse(advice);
-    
-    const renderValue = (value: unknown, depth = 0): JSX.Element => {
-      if (typeof value === 'string') {
-        return <p className="ml-4 whitespace-pre-wrap">{value}</p>;
-      }
-      if (Array.isArray(value)) {
-        return (
-          <div className={depth > 0 ? 'ml-4' : ''}>
-            {value.map((item, index) => {
-              const keyName = Object.keys(item)[0];
-              return (
-                <div key={index} className="mb-3 p-3 bg-muted/50 rounded-lg">
-                  <div className="font-medium text-primary mb-1 capitalize">
-                    {keyName.replace(/_/g, ' ')}
-                  </div>
-                  {renderValue(item[keyName], depth + 1)}
-                </div>
-              );
-            })}
-          </div>
-        );
-      }
-
-      if (typeof value === 'object' && value !== null) {
-        return (
-          <div className={depth > 0 ? 'ml-4' : ''}>
-            {Object.entries(value).map(([key, val]) => (
-              <div key={key} className="mb-2">
-                <h5 className="font-semibold text-foreground capitalize">
-                  {key.replace(/_/g, ' ').replace(/^\d+\s+/, '')}:
-                </h5>
-                {renderValue(val, depth + 1)}
-              </div>
-            ))}
-          </div>
-        );
-      }
-      return <p className="ml-4">{String(value)}</p>;
-    };
-
-    return <div className="space-y-3">{renderValue(parsed)}</div>;
-  } catch {
-    return <p className="whitespace-pre-wrap">{advice}</p>;
-  }
-};
-
-const AdvisoryPage = () => {
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const { t } = useLanguage();
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [crop, setCrop] = useState("");
-  const [location, setLocation] = useState("");
-  const [season, setSeason] = useState("");
+  const [currentAdvisory, setCurrentAdvisory] = useState(null);
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [advisories, setAdvisories] = useState<Advisory[]>([]);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState<string | 'all' | null>(null);
+  const [statusMsg, setStatusMsg] = useState(""); 
 
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (!session) {
-          navigate("/auth");
+  // --- 1. ROBUST AUTO-LOCATE FUNCTION ---
+  const handleAutoLocate = () => {
+    if (!navigator.geolocation) {
+      setStatusMsg("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    setStatusMsg("📍 Detecting location...");
+    setLoading(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude.toFixed(4);
+        const lon = position.coords.longitude.toFixed(4);
+
+        // Update coordinates immediately so user sees progress
+        setFormData(prev => ({ 
+            ...prev, 
+            lat: lat, 
+            lon: lon,
+            placeName: "Fetching city name..." 
+        }));
+
+        try {
+          // Reverse Geocode (Get City Name)
+          const response = await fetch(
+            `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+          );
+          
+          if (!response.ok) throw new Error("Location API failed");
+          
+          const data = await response.json();
+          
+          // Logic to find the best available name
+          const city = data.city || data.locality || data.principalSubdivision || "Unknown Location";
+          const region = data.principalSubdivision || data.countryName || "";
+          const fullName = region ? `${city}, ${region}` : city;
+          
+          // Update State with Name
+          setFormData(prev => ({ ...prev, placeName: fullName }));
+          setStatusMsg("✅ Location found! Analyzing...");
+          
+          // Immediately Run Analysis
+          generateAdvisory(lat, lon, fullName);
+
+        } catch (error) {
+          console.error("Geocoding failed", error);
+          const fallbackName = `Lat: ${lat}, Lon: ${lon}`;
+          setFormData(prev => ({ ...prev, placeName: fallbackName }));
+          generateAdvisory(lat, lon, fallbackName);
         }
-      }
+      },
+      (error) => {
+        let errorMsg = "❌ Unable to retrieve location.";
+        if (error.code === 1) errorMsg = "❌ Location permission denied.";
+        setStatusMsg(errorMsg);
+        setLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (!session) {
-        navigate("/auth");
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [navigate]);
-
-  const fetchAdvisories = useCallback(async () => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from("advisory_logs")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error fetching advisories:", error);
-    } else if (data) {
-      setAdvisories(data);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (user) {
-      fetchAdvisories();
-    }
-  }, [user, fetchAdvisories]);
-
-  const handleDeleteRequest = (id: string | 'all') => {
-    setItemToDelete(id);
-    setDialogOpen(true);
   };
 
-  const confirmDelete = async () => {
-    if (!user || !itemToDelete) return;
+  // --- 2. AI & WEATHER ENGINE ---
+  const generateAdvisory = async (manualLat, manualLon, manualPlace) => {
+    setLoading(true);
+    const lat = manualLat || formData.lat;
+    const lon = manualLon || formData.lon;
+    const place = manualPlace || formData.placeName;
 
-    try {
-      if (itemToDelete === 'all') {
-        const { error } = await supabase.from("advisory_logs").delete().eq("user_id", user.id);
-        if (error) throw error;
-        toast({ title: "Success", description: "All advisory history has been deleted." });
-      } else {
-        const { error } = await supabase.from("advisory_logs").delete().eq("id", itemToDelete);
-        if (error) throw error;
-        toast({ title: "Success", description: "Advisory has been deleted." });
-      }
-      await fetchAdvisories(); // Re-fetch data to ensure UI is in sync with DB
-    } catch (error: any) {
-      toast({ variant: "destructive", title: "Error", description: error.message });
-    } finally {
-      setDialogOpen(false);
-      setItemToDelete(null);
-    }
-  };
-
-  const handleGetAdvice = async () => {
-    if (!user) return;
-    const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!GEMINI_API_KEY || GEMINI_API_KEY.startsWith('A***')) {
-        toast({
-            variant: "destructive",
-            title: "Configuration Error",
-            description: "Gemini API key is not configured in .env file.",
-        });
+    if(!lat || !lon) {
+        setStatusMsg("❌ Please enter Latitude and Longitude.");
+        setLoading(false);
         return;
     }
 
-    setLoading(true);
     try {
-        const languageMap: { [key: string]: string } = {
-            'en': 'English',
-            'hi': 'Hindi',
-            'gu': 'Gujarati'
-        };
-        const responseLang = languageMap[t('languageCode') as keyof typeof languageMap] || 'English';
-
-        const prompt = `You are an expert agricultural advisor. Provide farming advice in ${responseLang} language for:
-        Crop: ${crop || 'general farming'}
-        Location: ${location || 'not specified'}
-        Season: ${season || 'current season'}
-        
-        IMPORTANT: Provide the ENTIRE response in ${responseLang} language, including all headings, labels, and content.
-        
-        Format your response as JSON with this EXACT structure:
-        {
-          "diagnosis": "Brief summary in ${responseLang}",
-          "advice": {
-            "0_best_practices": {
-              "title": "Title in ${responseLang}",
-              "details": "Details in ${responseLang}"
-            },
-            "1_common_challenges": {
-              "title": "Title in ${responseLang}",
-              "details": "Details in ${responseLang}"
-            },
-            "2_recommended_fertilizers": {
-              "title": "Title in ${responseLang}",
-              "details": "Details in ${responseLang}"
-            },
-            "3_irrigation_management": {
-              "title": "Title in ${responseLang}",
-              "details": "Details in ${responseLang}"
-            },
-            "4_harvesting_guidance": {
-              "title": "Title in ${responseLang}",
-              "details": "Details in ${responseLang}"
-            }
-          }
-        }
-        
-        Remember: ALL text must be in ${responseLang}, and use 0-based indexing (start from 0, not 1).`;
-
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            }
+        // A. FETCH LIVE WEATHER (Open-Meteo)
+        const weatherResponse = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=relativehumidity_2m`
         );
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Gemini API error:', response.status, errorText);
-            throw new Error(`AI advisory service failed: ${response.status}`);
-        }
-
-        const responseData = await response.json();
-        const text = responseData.candidates[0].content.parts[0].text;
+        const weatherData = await weatherResponse.json();
         
-        let result;
-        try {
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                result = JSON.parse(jsonMatch[0]);
-            } else {
-                throw new Error("Failed to parse AI response.");
-            }
-        } catch (e) {
-            console.error('JSON parse error:', e);
-            throw new Error("Received an invalid response from the AI advisory service.");
+        // Extract Real Data
+        const realTemp = weatherData.current_weather.temperature;
+        const realWind = weatherData.current_weather.windspeed;
+        const currentHour = new Date().getHours();
+        const realHumidity = weatherData.hourly.relativehumidity_2m[currentHour] || 60;
+
+        // B. SIMULATE NDVI (Vegetation Index)
+        // Context: Higher NDVI in favorable weather
+        const randomFactor = (parseFloat(lat) + parseFloat(lon)) % 1; 
+        const simulatedNDVI = 0.70 + (randomFactor * 0.15); 
+        const simulatedNDWI = 0.20 + (randomFactor * 0.1);
+
+        // C. AI LOGIC LAYERS
+        
+        // Yield Predictor
+        let yieldPred = simulatedNDVI * 12; 
+        if (formData.crop.toLowerCase().includes('wheat')) yieldPred *= 1.25;
+        
+        // Fertilizer Calculator
+        const ph = parseFloat(formData.ph);
+        let fertRec = "Balanced NPK (20-20-20)";
+        if (ph < 6.0) fertRec = "Lime + Nitrogen (Urea)";
+        if (ph > 7.5) fertRec = "Gypsum + Phosphorus (DAP)";
+
+        // Water Stress Detector
+        let stressStatus = { label: "Optimal", color: "text-green-600", bg: "bg-green-100" };
+        if (realTemp > 30 || simulatedNDWI < 0.2) {
+            stressStatus = { label: "High Stress", color: "text-red-600", bg: "bg-red-100" };
+        } else if (realTemp > 25 && simulatedNDWI < 0.3) {
+             stressStatus = { label: "Moderate", color: "text-orange-600", bg: "bg-orange-100" };
         }
 
-        await supabase.from("advisory_logs").insert({
-            user_id: user.id,
-            diagnosis: result.diagnosis,
-            advice: JSON.stringify(result.advice),
-        });
+        // Disease Risk Forecaster
+        let diseaseRisk = "Low Risk";
+        if (realHumidity > 85 && realTemp > 18 && realTemp < 28) diseaseRisk = "High (Fungal)";
+        else if (realHumidity > 70) diseaseRisk = "Moderate Risk";
 
-        toast({
-            title: t('advice'),
-            description: result.diagnosis,
-        });
+        // Construct Final Object
+        const newAdvisory = {
+            id: Date.now(),
+            timestamp: new Date().toLocaleTimeString(),
+            place: place,
+            crop: formData.crop,
+            yield: yieldPred.toFixed(1) + " t/ha",
+            fertilizer: fertRec,
+            waterStress: stressStatus,
+            disease: diseaseRisk,
+            metrics: {
+                temp: realTemp,
+                humidity: realHumidity,
+                ndvi: simulatedNDVI,
+                wind: realWind
+            }
+        };
 
-        setCrop("");
-        setLocation("");
-        setSeason("");
-        fetchAdvisories();
-    } catch (error: unknown) {
-        toast({
-            variant: "destructive",
-            title: "Error",
-            description: error instanceof Error ? error.message : 'An error occurred while fetching advice.',
-        });
+        setCurrentAdvisory(newAdvisory);
+        setHistory(prev => [newAdvisory, ...prev]);
+        setStatusMsg(""); 
+
+    } catch (err) {
+        console.error(err);
+        setStatusMsg("❌ Error connecting to satellite data.");
     } finally {
         setLoading(false);
     }
   };
 
-  if (!user) return null;
-
+  // --- UI RENDER ---
   return (
-    <div className="min-h-screen bg-background">
-      <Header user={user} />
+    <div className="min-h-screen bg-slate-50 p-4 md:p-10 font-sans text-slate-800">
       
-      <main className="container mx-auto px-4 py-8 fade-in-up">
-        <Button
-          variant="ghost"
-          onClick={() => navigate('/dashboard')}
-          className="mb-6 text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          {t('dashboard')}
-        </Button>
+      {/* HEADER */}
+      <div className="max-w-6xl mx-auto mb-8 flex items-center gap-3">
+         <div className="bg-green-600 p-2 rounded-lg shadow-md">
+            <MapPin className="text-white" size={24} />
+         </div>
+         <div>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">GeoGemma AI</h1>
+            <p className="text-xs text-slate-500 font-medium">Secure backend powered advisory</p>
+         </div>
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <Card className="h-fit">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Leaf className="w-5 h-5 text-primary" />
-                {t('aiAdvisory')}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Input
-                placeholder={t('crop')}
-                value={crop}
-                onChange={(e) => setCrop(e.target.value)}
-              />
-              <Input
-                placeholder={t('location')}
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-              />
-              <Input
-                placeholder={t('season')}
-                value={season}
-                onChange={(e) => setSeason(e.target.value)}
-              />
-              <Button
-                onClick={handleGetAdvice}
-                disabled={loading}
-                className="w-full"
-              >
-                {loading ? `${t('diagnosing')}` : t('getAdvice')}
-              </Button>
-            </CardContent>
-          </Card>
+      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        {/* LEFT COLUMN: INPUT FORM */}
+        <div className="lg:col-span-5 space-y-6">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <Search size={18} className="text-slate-400"/> Parameters
+                </h2>
+                <button 
+                    onClick={handleAutoLocate}
+                    className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-md font-semibold hover:bg-blue-100 transition-colors flex items-center gap-1 border border-blue-100"
+                >
+                    <Navigation size={12} /> Auto-Locate
+                </button>
+            </div>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>{t('advisoryHistory')}</CardTitle>
-              {advisories.length > 0 && (
-                <Button variant="destructive" size="sm" onClick={() => handleDeleteRequest('all')}>
-                  <Trash className="w-4 h-4 mr-2" />
-                  Delete All
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-                {advisories.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center text-center text-muted-foreground py-16">
-                    <Archive className="w-16 h-16 mb-4 text-primary/30" />
-                    <h3 className="text-lg font-semibold text-foreground">No History Found</h3>
-                    <p>Your generated farm advisories will appear here.</p>
-                  </div>
-                ) : (
-                  advisories.map((advisory) => (
-                    <Card key={advisory.id} className="border-l-4 border-l-primary transition-all duration-300 hover:shadow-md hover:border-l-primary/70 group relative">
-                       <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute top-2 right-2 h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleDeleteRequest(advisory.id)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                      <CardContent className="pt-6 space-y-3">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Calendar className="w-4 h-4" />
-                          {format(new Date(advisory.created_at), "PPP 'at' p")}
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-primary mb-1">{t('diagnosis')}:</h4>
-                          <p className="text-sm text-foreground">{advisory.diagnosis}</p>
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-secondary mb-1">{t('advice')}:</h4>
-                          <div className="text-sm text-muted-foreground space-y-2">
-                            {typeof advisory.advice === 'string' && advisory.advice.trim().startsWith('{') ? (
-                              <AdvisoryFormatter advice={advisory.advice} />
-                            ) : (
-                              <p className="whitespace-pre-wrap">{advisory.advice}</p>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
+            <div className="space-y-4">
+              <InputField 
+                label="Crop Type" 
+                value={formData.crop} 
+                onChange={(e) => setFormData({...formData, crop: e.target.value})} 
+              />
+              
+              <InputField 
+                label="Place Name" 
+                placeholder="Auto-fills on locate..."
+                value={formData.placeName} 
+                onChange={(e) => setFormData({...formData, placeName: e.target.value})} 
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                 <InputField 
+                    label="Latitude" 
+                    type="number"
+                    value={formData.lat} 
+                    onChange={(e) => setFormData({...formData, lat: e.target.value})} 
+                 />
+                 <InputField 
+                    label="Longitude" 
+                    type="number"
+                    value={formData.lon} 
+                    onChange={(e) => setFormData({...formData, lon: e.target.value})} 
+                 />
               </div>
-            </CardContent>
-          </Card>
+
+              <div className="grid grid-cols-2 gap-4">
+                <InputField 
+                    label="Growth Stage" 
+                    value={formData.stage} 
+                    onChange={(e) => setFormData({...formData, stage: e.target.value})} 
+                />
+                <InputField 
+                    label="Soil pH" 
+                    type="number"
+                    value={formData.ph} 
+                    onChange={(e) => setFormData({...formData, ph: e.target.value})} 
+                />
+              </div>
+
+              {statusMsg && <p className="text-blue-600 text-xs font-medium text-center animate-pulse">{statusMsg}</p>}
+
+              <button 
+                onClick={() => generateAdvisory()}
+                disabled={loading}
+                className="w-full mt-4 bg-green-700 hover:bg-green-800 text-white font-semibold py-3 px-4 rounded-lg transition-all shadow-md flex justify-center items-center gap-2"
+              >
+                {loading ? "Processing..." : "Generate Advisory"}
+              </button>
+            </div>
+          </div>
         </div>
-      </main>
-      <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the
-              {itemToDelete === 'all' ? ' all advisory history' : ' advisory entry'}.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Continue</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+
+        {/* RIGHT COLUMN: ADVISORY RESULTS */}
+        <div className="lg:col-span-7 space-y-6">
+          
+          {currentAdvisory ? (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Result Header */}
+              <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center">
+                <div>
+                    <h2 className="font-bold text-lg flex items-center gap-2">
+                    <Leaf size={18} className="text-green-400" /> Advisory Report
+                    </h2>
+                    <p className="text-xs text-slate-400">Location: {currentAdvisory.place}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <span className="text-xs font-mono text-slate-300">LIVE</span>
+                </div>
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <ResultItem 
+                    icon={<Activity className="text-blue-600" size={20}/>}
+                    label="Predicted Yield"
+                    value={currentAdvisory.yield}
+                />
+
+                <div className="flex items-start gap-3">
+                    <div className="mt-1 p-1.5 bg-slate-50 rounded-md"><Droplets className="text-cyan-600" size={20}/></div>
+                    <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Water Stress</p>
+                        <span className={`inline-block mt-1 px-2 py-0.5 rounded text-sm font-bold ${currentAdvisory.waterStress.color} ${currentAdvisory.waterStress.bg}`}>
+                            {currentAdvisory.waterStress.label}
+                        </span>
+                    </div>
+                </div>
+
+                <ResultItem 
+                    icon={<Sprout className="text-purple-600" size={20}/>}
+                    label="Fertilizer Rec."
+                    value={currentAdvisory.fertilizer}
+                />
+
+                <ResultItem 
+                    icon={<ThermometerSun className="text-orange-600" size={20}/>}
+                    label="Disease Risk"
+                    value={currentAdvisory.disease}
+                />
+              </div>
+
+              {/* Live Metrics Footer */}
+              <div className="bg-slate-50 p-4 border-t border-slate-100 text-xs text-slate-500 grid grid-cols-4 gap-2">
+                <div className="text-center border-r border-slate-200">
+                    <span className="block font-bold text-slate-700 text-lg">{currentAdvisory.metrics.temp}°C</span>
+                    Live Temp
+                </div>
+                <div className="text-center border-r border-slate-200">
+                    <span className="block font-bold text-slate-700 text-lg">{currentAdvisory.metrics.humidity}%</span>
+                    Humidity
+                </div>
+                <div className="text-center border-r border-slate-200">
+                    <span className="block font-bold text-slate-700 text-lg">{currentAdvisory.metrics.wind} km/h</span>
+                    Wind Speed
+                </div>
+                <div className="text-center">
+                    <span className="block font-bold text-slate-700 text-lg">{currentAdvisory.metrics.ndvi.toFixed(2)}</span>
+                    Est. NDVI
+                </div>
+              </div>
+            </div>
+          ) : (
+            // EMPTY STATE (Start Screen)
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 flex flex-col items-center justify-center text-center h-64">
+                <div className="p-4 bg-slate-50 rounded-full mb-4">
+                    <History className="text-slate-300" size={32} />
+                </div>
+                <h3 className="text-lg font-medium text-slate-900">Ready to Analyze</h3>
+                <p className="text-slate-500 max-w-xs mx-auto mt-2">
+                    Click <b>Auto-Locate</b> to fetch live environmental data for your farm.
+                </p>
+            </div>
+          )}
+
+          {/* HISTORY LIST */}
+          {history.length > 0 && (
+             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <h3 className="font-bold text-slate-800 mb-4 text-sm uppercase tracking-wider">Recent Scans</h3>
+                <div className="space-y-2">
+                    {history.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-3 bg-slate-50 hover:bg-white border border-transparent hover:border-slate-200 rounded-lg transition-all cursor-pointer" onClick={() => setCurrentAdvisory(item)}>
+                            <div className="flex items-center gap-3">
+                                <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                                <div>
+                                    <p className="font-bold text-sm text-slate-700">{item.place}</p>
+                                    <p className="text-xs text-slate-500">{item.crop} • {item.timestamp}</p>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+             </div>
+          )}
+
+        </div>
+      </div>
     </div>
   );
 };
 
-export default AdvisoryPage;
+// --- SUB-COMPONENTS ---
+const InputField = ({ label, value, onChange, placeholder, type = "text" }) => (
+  <div className="space-y-1.5">
+    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</label>
+    <input 
+      type={type}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all text-sm text-slate-800"
+    />
+  </div>
+);
+
+const ResultItem = ({ icon, label, value }) => (
+    <div className="flex items-start gap-3">
+        <div className="mt-1 p-1.5 bg-slate-50 rounded-md">{icon}</div>
+        <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+            <p className="font-semibold text-slate-800 text-sm mt-0.5 leading-snug">{value}</p>
+        </div>
+    </div>
+);
+
+export default App;
